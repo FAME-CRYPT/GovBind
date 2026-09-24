@@ -1,0 +1,58 @@
+doctype html
+html(lang='en')
+  head
+    meta(charset='utf-8')
+    meta(name='viewport' content='width=device-width, initial-scale=1')
+    title GovBind
+    link(rel='stylesheet' href='/styles.css')
+    script(src='/index.js' defer)
+  body
+    include includes/header.pug
+    main.shell
+      header.intro
+        p.eyebrow GovBind
+        h1 Prove a document claim privately
+        p.description Select a document and define the public assertion you want to check locally.
+
+      form.proof-form(action='/verify' method='post' enctype='multipart/form-data')
+        section.form-section
+          label(for='documentType') Document type
+          select#documentType(name='documentType' required)
+            option(value='' selected disabled) Select a document type
+            option(value='military-service') Military Service
+
+        section.form-section
+          label(for='document') Document
+          input#document(type='file' name='document' accept='application/pdf,.pdf' required)
+          p.hint PDF only, up to 4 MB. The file stays on this computer.
+
+        section#proofParameters.form-section.proof-parameters(hidden)
+          .section-heading
+            h2 Proof parameters
+            p These values will be public.
+
+          .field-grid
+            div
+              label(for='generationDate') Generation date
+              input#generationDate(type='date' name='generationDate' value=today required)
+
+            div
+              label(for='assertionMonths') Time assertion
+              .input-suffix
+                input#assertionMonths(type='number' name='assertionMonths' value='2' min='1' step='1' required)
+                span months
+
+          p.assertion-copy
+            | I want to show that my military service is not due within#{' '}
+            span#assertionDuration 2 months
+            | #{' '}starting from#{' '}
+            span#generationDateLabel= generationDateLabel
+            | .
+
+          p#verificationStatus.form-status(role='status' hidden)
+          button#verifyButton(type='submit')
+            span.button-label Create proof
+            span.spinner(aria-hidden='true' hidden)
+
+        noscript
+          p.notice JavaScript is required to reveal the proof parameters.

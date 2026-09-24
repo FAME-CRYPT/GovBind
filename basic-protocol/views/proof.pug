@@ -1,0 +1,49 @@
+doctype html
+html(lang='en')
+  head
+    meta(charset='utf-8')
+    meta(name='viewport' content='width=device-width, initial-scale=1')
+    title Proofs · GovBind
+    link(rel='stylesheet' href='/styles.css')
+    script(src='/proof.js' defer)
+  body
+    include includes/header.pug
+    main.shell
+      header.intro
+        p.eyebrow Proof history
+        h1 Generated proofs
+        p.description Review locally generated proof records or download their complete JSON data.
+
+      if proofs.length === 0
+        section.empty-state
+          h2 No proofs yet
+          p Complete a verification to create your first proof record.
+          a.primary-link(href='/verify') Create proof
+      else
+        ol.proof-list
+          each proof in proofs
+            li.proof-card(data-proof-hash=proof.hash)
+              .proof-card-heading
+                div
+                  p.proof-type Military Service
+                  time(datetime=proof.createdAt)= new Date(proof.createdAt).toLocaleString('en', { timeZone: 'Europe/Istanbul' })
+                span.mode-badge= proof.mode
+              dl.proof-metadata
+                div
+                  dt Generation date
+                  dd= proof.assertion.today
+                div
+                  dt Time assertion
+                  dd= `${proof.assertion.months} ${proof.assertion.months === 1 ? 'month' : 'months'}`
+                div
+                  dt Instructions
+                  dd= proof.totalInstructionCount.toLocaleString('en')
+                if proof.proverGas !== undefined
+                  div
+                    dt Prover gas
+                    dd= proof.proverGas.toLocaleString('en')
+              code.proof-hash= proof.hash
+              .proof-actions
+                a.secondary-button(href=`/proof/download?hash=${proof.hash}`) Download JSON
+                button.delete-button(type='button' data-delete-proof=proof.hash) Delete
+        p#proofStatus.form-status(role='status' hidden)

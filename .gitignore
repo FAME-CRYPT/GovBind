@@ -1,0 +1,16 @@
+**/node_modules/
+**/dist/
+**/.env
+**/.runtime/
+**/target/
+**/circuits/**/Prover.toml
+**/circuits/**/Prover-*.toml
+
+# Each uploads/proofs directory carries a nested .gitignore that preserves only
+# the placeholder. These root rules provide defense in depth for new profiles.
+**/uploads/**
+!**/uploads/**/
+!**/uploads/**/.gitignore
+**/proofs/**
+!**/proofs/**/
+!**/proofs/**/.gitignore

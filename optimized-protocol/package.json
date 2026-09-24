@@ -1,0 +1,44 @@
+{
+  "name": "govbind-optimized-protocol",
+  "version": "2.0.0",
+  "description": "GovBind's optimized protocol using selective TLSNotary commitments and Noir UltraHonk.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "npm run build:native && npm run build:circuit",
+    "build:native": "npm run build:native:zktls",
+    "build:native:zktls": "cargo build --release --manifest-path native/zktls/Cargo.toml",
+    "build:circuit": "tsc && node dist/scripts/build-circuits.js",
+    "build:circuit:military": "npm run build:circuit -- military-service",
+    "build:circuit:residence": "npm run build:circuit -- residence",
+    "build:circuit:criminal-record": "npm run build:circuit -- criminal-record",
+    "build:circuit:driver-license": "npm run build:circuit -- driver-license",
+    "build:circuit:tax-debt": "npm run build:circuit -- tax-debt",
+    "build:notary": "cargo build --release --manifest-path ../external/notary/Cargo.toml",
+    "benchmark": "tsc && node dist/scripts/benchmark.js",
+    "start": "tsc && node dist/index.js",
+    "start:notary": "cargo run --release --manifest-path ../external/notary/Cargo.toml -- --listen 127.0.0.1:8000 --key ../.runtime/notary.key --benchmark-capture ../.runtime/notary-benchmark-capture.bin",
+    "verify:proof": "tsc && node dist/scripts/verify-proof.js",
+    "test": "npm run test:unit && npm run test:circuit && npm run test:native && tsc --noEmit",
+    "test:unit": "tsc && node --test dist/tests/host-validation.test.js",
+    "test:circuit": "tsc && node dist/scripts/test-circuits.js",
+    "test:native": "cargo test --locked --manifest-path native/zktls/Cargo.toml"
+  },
+  "author": "Yunus Gürlek",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "multer": "^2.4.0",
+    "pdfjs-dist": "^6.3.289",
+    "pug": "^3.0.4"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^20.19.43",
+    "typescript": "^5.9.3"
+  }
+}

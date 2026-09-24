@@ -1,0 +1,77 @@
+doctype html
+html(lang='en')
+  head
+    meta(charset='utf-8')
+    meta(name='viewport' content='width=device-width, initial-scale=1')
+    title Proofs · GovBind
+    link(rel='stylesheet' href='/styles.css')
+    script(src='/proof.js' defer)
+  body
+    include includes/header.pug
+    main.shell
+      header.intro
+        p.eyebrow Proof history
+        h1 Generated proofs
+        p.description Review locally generated proof records or download their complete JSON data.
+
+      if proofs.length === 0
+        section.empty-state
+          h2 No proofs yet
+          p Complete a verification to create your first proof record.
+          a.primary-link(href='/verify') Create proof
+      else
+        ol.proof-list
+          each proof in proofs
+            li.proof-card(data-proof-hash=proof.hash)
+              .proof-card-heading
+                div
+                  p.proof-type= proof.documentLabel
+                  time(datetime=proof.createdAt)= new Date(proof.createdAt).toLocaleString('en', { timeZone: 'Europe/Istanbul' })
+                span.mode-badge= proof.mode
+              dl.proof-metadata
+                if proof.assertion.kind === 'military-service'
+                  div
+                    dt Generation date
+                    dd= proof.assertion.today
+                  div
+                    dt Time assertion
+                    dd= `${proof.assertion.months} ${proof.assertion.months === 1 ? 'month' : 'months'}`
+                else if proof.assertion.kind === 'residence'
+                  div
+                    dt Proved city
+                    dd= proof.assertion.city
+                else if proof.assertion.kind === 'criminal-record'
+                  div
+                    dt Public identity number
+                    dd= proof.assertion.identityNumber
+                  div
+                    dt Assertion
+                    dd No criminal record
+                else if proof.assertion.kind === 'driver-license'
+                  div
+                    dt Traffic ticket count
+                    dd= `< ${proof.assertion.maximumTrafficTickets}`
+                  div
+                    dt Total penalty points
+                    dd= `< ${proof.assertion.maximumTotalPenaltyPoints}`
+                  div
+                    dt Active penalty points
+                    dd= `< ${proof.assertion.maximumActivePenaltyPoints}`
+                else
+                  div
+                    dt Public identity number
+                    dd= proof.assertion.identityNumber
+                  div
+                    dt Issuance date
+                    dd= proof.assertion.issuanceDate
+                  div
+                    dt Assertion
+                    dd No overdue tax debt
+                div
+                  dt Proof size
+                  dd= `${proof.proofBytes.toLocaleString('en')} bytes`
+              code.proof-hash= proof.hash
+              .proof-actions
+                a.secondary-button(href=`/proof/download?hash=${proof.hash}`) Download JSON
+                button.delete-button(type='button' data-delete-proof=proof.hash) Delete
+        p#proofStatus.form-status(role='status' hidden)

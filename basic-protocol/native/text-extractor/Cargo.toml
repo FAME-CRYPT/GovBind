@@ -1,0 +1,10 @@
+[package]
+name = "zkpdf-text-hash"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+extractor = { path = "../../vendor/zkpdf/pdf-utils/extractor" }
+hex = "0.4"
+sha2 = "0.10"

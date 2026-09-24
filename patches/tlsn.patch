@@ -1,0 +1,547 @@
+diff --git a/crates/attestation/src/lib.rs b/crates/attestation/src/lib.rs
+index 44ca430..5fa66c7 100644
+--- a/crates/attestation/src/lib.rs
++++ b/crates/attestation/src/lib.rs
+@@ -428,7 +428,7 @@ impl Body {
+     }
+ 
+     /// Returns the transcript commitments.
+-    pub(crate) fn transcript_commitments(&self) -> impl Iterator<Item = &TranscriptCommitment> {
++    pub fn transcript_commitments(&self) -> impl Iterator<Item = &TranscriptCommitment> {
+         self.transcript_commitments.iter().map(|field| &field.data)
+     }
+ }
+diff --git a/crates/tlsn/src/lib.rs b/crates/tlsn/src/lib.rs
+index bcda954..93218fb 100644
+--- a/crates/tlsn/src/lib.rs
++++ b/crates/tlsn/src/lib.rs
+@@ -55,6 +55,7 @@ pub(crate) mod transcript_internal;
+ pub mod verifier;
+ 
+ pub use error::Error;
++pub use proxy::{ProverProxyTranscript, ProxyTranscript};
+ pub use rangeset;
+ pub use session::{Session, SessionDriver, SessionHandle};
+ pub use tlsn_attestation as attestation;
+@@ -95,6 +96,7 @@ pub(crate) enum Role {
+ pub(crate) struct TlsOutput {
+     pub(crate) keys: SessionKeys,
+     pub(crate) tls_transcript: TlsTranscript,
++    pub(crate) proxy_transcript: Option<ProverProxyTranscript>,
+ }
+ 
+ /// Protocol variant.
+diff --git a/crates/tlsn/src/prover.rs b/crates/tlsn/src/prover.rs
+index 4c1112f..67d0895 100644
+--- a/crates/tlsn/src/prover.rs
++++ b/crates/tlsn/src/prover.rs
+@@ -21,6 +21,7 @@ use crate::{
+         future::FutureState,
+         state::ConnectedProj,
+     },
++    proxy::{ProverProxyTranscript, TlsBytes},
+     tag::verify_tags,
+ };
+ 
+@@ -230,6 +231,23 @@ impl Prover<state::CommitAccepted<Proxy>> {
+     pub fn connect(
+         self,
+         config: TlsClientConfig,
++    ) -> Result<(TlsConnection, Prover<state::Connected<Stream>>)> {
++        self.connect_inner(config, false)
++    }
++
++    /// Connects to the proxy and retains private data needed for later replay.
++    #[instrument(parent = &self.span, level = "debug", skip_all, err)]
++    pub fn connect_with_capture(
++        self,
++        config: TlsClientConfig,
++    ) -> Result<(TlsConnection, Prover<state::Connected<Stream>>)> {
++        self.connect_inner(config, true)
++    }
++
++    fn connect_inner(
++        self,
++        config: TlsClientConfig,
++        retain_capture: bool,
+     ) -> Result<(TlsConnection, Prover<state::Connected<Stream>>)> {
+         let ProverDeps::Proxy(ProverProxyDeps {
+             prover: proxy_prover,
+@@ -247,8 +265,12 @@ impl Prover<state::CommitAccepted<Proxy>> {
+         let server_name =
+             TlsServerName::try_from(server_name.as_ref()).expect("name was validated");
+ 
+-        let tls_client: Box<dyn TlsClient<Error = Error> + Send> =
+-            Box::new(ProxyTlsClient::new(proxy_prover, &config, server_name)?);
++        let tls_client: Box<dyn TlsClient<Error = Error> + Send> = Box::new(ProxyTlsClient::new(
++            proxy_prover,
++            &config,
++            server_name,
++            retain_capture,
++        )?);
+ 
+         let control = ProverControl {
+             decrypt: tls_client.decrypt(),
+@@ -280,6 +302,84 @@ impl Prover<state::CommitAccepted<Proxy>> {
+ 
+         Ok((conn, prover))
+     }
++
++    /// Replays a previously captured Proxy-TLS transcript using fresh protocol state.
++    #[instrument(parent = &self.span, level = "debug", skip_all, err)]
++    pub async fn replay(
++        self,
++        server_name: ServerName,
++        capture: ProverProxyTranscript,
++    ) -> Result<Prover<state::Committed>> {
++        let ProverDeps::Proxy(ProverProxyDeps {
++            prover: proxy_prover,
++            ..
++        }) = self.state.deps
++        else {
++            unreachable!("proxy-tls received incorrect deps")
++        };
++        let ProverProxyTranscript {
++            wire,
++            master_secret,
++            app_sent,
++            app_recv,
++        } = capture;
++        let (mut ctx, mut vm, output) = proxy_prover
++            .finalize(
++                master_secret,
++                wire.time,
++                TlsBytes {
++                    tls_sent: wire.tls_sent,
++                    tls_recv: wire.tls_recv,
++                    app_sent,
++                    app_recv,
++                },
++                false,
++            )
++            .await?;
++        let TlsOutput {
++            keys,
++            tls_transcript,
++            ..
++        } = output;
++
++        let _ = verify_tags(
++            &mut vm,
++            (keys.server_write_key, keys.server_write_iv),
++            keys.server_write_mac_key,
++            tls_transcript.version(),
++            tls_transcript.recv().to_vec(),
++        )
++        .map_err(|err| {
++            Error::internal()
++                .with_msg("tag verification setup failed")
++                .with_source(err)
++        })?;
++        vm.execute_all(&mut ctx).await.map_err(|err| {
++            Error::internal()
++                .with_msg("tag verification zk execution failed")
++                .with_source(err)
++        })?;
++        let transcript = tls_transcript.to_transcript().map_err(|e| {
++            Error::internal()
++                .with_msg("invalid replay transcript")
++                .with_source(e)
++        })?;
++
++        Ok(Prover {
++            config: self.config,
++            span: self.span,
++            ctx: Some(ctx),
++            mux_handle: self.mux_handle,
++            state: state::Committed {
++                vm,
++                server_name,
++                keys,
++                tls_transcript,
++                transcript,
++                proxy_transcript: None,
++            },
++        })
++    }
+ }
+ 
+ impl<S> Prover<state::Connected<S>>
+@@ -342,6 +442,7 @@ where
+             TlsOutput {
+                 keys,
+                 tls_transcript,
++                proxy_transcript,
+             },
+         ) = self
+             .state
+@@ -388,6 +489,7 @@ where
+                 keys,
+                 tls_transcript,
+                 transcript,
++                proxy_transcript,
+             },
+         };
+ 
+@@ -507,6 +609,11 @@ impl Prover<state::Committed> {
+         &self.state.transcript
+     }
+ 
++    /// Returns replay data for a completed Proxy-TLS connection.
++    pub fn proxy_transcript(&self) -> Option<&ProverProxyTranscript> {
++        self.state.proxy_transcript.as_ref()
++    }
++
+     /// Proves information to the verifier.
+     ///
+     /// # Arguments
+diff --git a/crates/tlsn/src/prover/client/mpc.rs b/crates/tlsn/src/prover/client/mpc.rs
+index 80a7282..20bcaec 100644
+--- a/crates/tlsn/src/prover/client/mpc.rs
++++ b/crates/tlsn/src/prover/client/mpc.rs
+@@ -311,6 +311,7 @@ impl TlsClient for MpcTlsClient {
+                     let output = TlsOutput {
+                         keys,
+                         tls_transcript,
++                        proxy_transcript: None,
+                     };
+ 
+                     self.state = State::Finished;
+diff --git a/crates/tlsn/src/prover/client/proxy/mod.rs b/crates/tlsn/src/prover/client/proxy/mod.rs
+index cde5b84..a60935d 100644
+--- a/crates/tlsn/src/prover/client/proxy/mod.rs
++++ b/crates/tlsn/src/prover/client/proxy/mod.rs
+@@ -42,6 +42,7 @@ pub(crate) struct ProxyTlsClient {
+     server_closed: bool,
+     state: State,
+     decrypt: Arc<DecryptState>,
++    retain_capture: bool,
+ }
+ 
+ enum State {
+@@ -69,6 +70,7 @@ impl ProxyTlsClient {
+         prover: Box<ProxyProver>,
+         config: &TlsClientConfig,
+         server_name: ServerName,
++        retain_capture: bool,
+     ) -> Result<Self, TlsnError> {
+         let provider = rustls::crypto::ring::default_provider();
+ 
+@@ -117,6 +119,7 @@ impl ProxyTlsClient {
+             server_closed: false,
+             state: State::Init { prover },
+             decrypt: Arc::new(decrypt),
++            retain_capture,
+         };
+ 
+         Ok(tls_client)
+@@ -257,7 +260,7 @@ impl TlsClient for ProxyTlsClient {
+                     })?;
+                     let traffic = std::mem::take(&mut self.traffic);
+ 
+-                    let fut = Box::pin(prover.finalize(ms, time, traffic));
++                    let fut = Box::pin(prover.finalize(ms, time, traffic, self.retain_capture));
+ 
+                     self.state = State::Finalizing { fut };
+                     self.poll(cx)
+diff --git a/crates/tlsn/src/prover/state.rs b/crates/tlsn/src/prover/state.rs
+index 504acf5..2c190c8 100644
+--- a/crates/tlsn/src/prover/state.rs
++++ b/crates/tlsn/src/prover/state.rs
+@@ -11,7 +11,7 @@ use tlsn_core::{
+ };
+ 
+ use crate::{
+-    Error, TlsOutput,
++    Error, ProverProxyTranscript, TlsOutput,
+     deps::{ProverDeps, ProverZk},
+     prover::{ProverControl, client::TlsClient},
+ };
+@@ -59,6 +59,7 @@ pub struct Committed {
+     pub(crate) keys: SessionKeys,
+     pub(crate) tls_transcript: TlsTranscript,
+     pub(crate) transcript: Transcript,
++    pub(crate) proxy_transcript: Option<ProverProxyTranscript>,
+ }
+ 
+ opaque_debug::implement!(Committed);
+diff --git a/crates/tlsn/src/proxy.rs b/crates/tlsn/src/proxy.rs
+index a5ff44d..66dc17b 100644
+--- a/crates/tlsn/src/proxy.rs
++++ b/crates/tlsn/src/proxy.rs
+@@ -11,6 +11,7 @@ use mpz_memory_core::{
+     binary::{Binary, U8},
+ };
+ use mpz_vm_core::Vm;
++use serde::{Deserialize, Serialize};
+ use std::{io, pin::Pin, task::Poll};
+ 
+ mod prover;
+@@ -19,6 +20,50 @@ pub(crate) use prover::ProxyProver;
+ mod verifier;
+ pub(crate) use verifier::ProxyVerifier;
+ 
++/// The encrypted wire transcript retained by a Proxy-TLS verifier.
++#[derive(Clone, Serialize, Deserialize)]
++pub struct ProxyTranscript {
++    pub(crate) time: u64,
++    pub(crate) tls_sent: Vec<u8>,
++    pub(crate) tls_recv: Vec<u8>,
++}
++
++impl ProxyTranscript {
++    pub(crate) fn new(time: u64, tls_sent: Vec<u8>, tls_recv: Vec<u8>) -> Self {
++        Self {
++            time,
++            tls_sent,
++            tls_recv,
++        }
++    }
++
++    /// Returns the encrypted TLS bytes sent by the prover.
++    pub fn sent(&self) -> &[u8] {
++        &self.tls_sent
++    }
++
++    /// Returns the encrypted TLS bytes received by the prover.
++    pub fn received(&self) -> &[u8] {
++        &self.tls_recv
++    }
++}
++
++/// Private prover data required to replay a captured Proxy-TLS transcript.
++#[derive(Clone, Serialize, Deserialize)]
++pub struct ProverProxyTranscript {
++    pub(crate) wire: ProxyTranscript,
++    pub(crate) master_secret: Vec<u8>,
++    pub(crate) app_sent: Vec<u8>,
++    pub(crate) app_recv: Vec<u8>,
++}
++
++impl ProverProxyTranscript {
++    /// Returns the encrypted wire transcript shared with the verifier.
++    pub fn wire(&self) -> &ProxyTranscript {
++        &self.wire
++    }
++}
++
+ const AES_GCM_START_COUNTER: u32 = 2;
+ 
+ fn alloc_ghash_key(
+diff --git a/crates/tlsn/src/proxy/prover.rs b/crates/tlsn/src/proxy/prover.rs
+index 94e29ec..4531b24 100644
+--- a/crates/tlsn/src/proxy/prover.rs
++++ b/crates/tlsn/src/proxy/prover.rs
+@@ -1,7 +1,10 @@
+ use crate::{
+     Error as TlsnError, TlsOutput,
+     deps::ProverZk,
+-    proxy::{MsVisibility, References, TlsBytes, VerifyDataCheck, alloc_proxy_refs},
++    proxy::{
++        MsVisibility, ProverProxyTranscript, ProxyTranscript, References, TlsBytes,
++        VerifyDataCheck, alloc_proxy_refs,
++    },
+ };
+ use hmac_sha256::{MSMode, NetworkMode, Prf, PrfConfig};
+ use mpz_common::Context;
+@@ -58,6 +61,7 @@ impl ProxyProver {
+         ms: Vec<u8>,
+         time: u64,
+         traffic: TlsBytes,
++        retain_capture: bool,
+     ) -> Result<(Context, ProverZk, TlsOutput), TlsnError> {
+         let tls_transcript = TlsTranscript::builder()
+             .time(time)
+@@ -77,6 +81,12 @@ impl ProxyProver {
+         let ms: [u8; 48] = ms
+             .try_into()
+             .map_err(|_| TlsnError::internal().with_msg("ms has wrong length"))?;
++        let proxy_transcript = retain_capture.then(|| ProverProxyTranscript {
++            wire: ProxyTranscript::new(time, traffic.tls_sent.clone(), traffic.tls_recv.clone()),
++            master_secret: ms.to_vec(),
++            app_sent: traffic.app_sent,
++            app_recv: traffic.app_recv,
++        });
+ 
+         let cf_hash: [u8; 32] = tls_transcript
+             .cf_hash()
+@@ -165,6 +175,7 @@ impl ProxyProver {
+         let output = TlsOutput {
+             keys: refs.keys,
+             tls_transcript,
++            proxy_transcript,
+         };
+ 
+         Ok((self.ctx, self.vm, output))
+diff --git a/crates/tlsn/src/proxy/verifier.rs b/crates/tlsn/src/proxy/verifier.rs
+index b0eabc6..122eec1 100644
+--- a/crates/tlsn/src/proxy/verifier.rs
++++ b/crates/tlsn/src/proxy/verifier.rs
+@@ -162,6 +162,7 @@ impl ProxyVerifier {
+         let output = TlsOutput {
+             keys: refs.keys,
+             tls_transcript,
++            proxy_transcript: None,
+         };
+ 
+         Ok((
+diff --git a/crates/tlsn/src/session.rs b/crates/tlsn/src/session.rs
+index 241ca8c..5dd65da 100644
+--- a/crates/tlsn/src/session.rs
++++ b/crates/tlsn/src/session.rs
+@@ -49,6 +49,7 @@ where
+     pub fn new(io: Io) -> Self {
+         let mut mux_config = tlsn_mux::Config::default();
+ 
++        mux_config.set_max_num_streams(4096);
+         mux_config.set_keep_alive(true);
+         mux_config.set_close_sync(true);
+ 
+diff --git a/crates/tlsn/src/verifier.rs b/crates/tlsn/src/verifier.rs
+index 2ca5b6b..ec765aa 100644
+--- a/crates/tlsn/src/verifier.rs
++++ b/crates/tlsn/src/verifier.rs
+@@ -9,14 +9,14 @@ use crate::{
+     Error, Mpc, PROXY_STREAM_PREFIX, Proxy, Result,
+     deps::{VerifierDeps, VerifierMpcDeps, VerifierProxyDeps},
+     msg::{ProveRequestMsg, Response, TlsCommitRequestMsg},
+-    proxy::InspectReader,
++    proxy::{InspectReader, ProxyTranscript},
+     tag::verify_tags,
+ };
+ use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+ use mpz_common::Context;
+ use mpz_vm_core::prelude::*;
+ use serio::{SinkExt, stream::IoStreamExt};
+-use std::{marker::PhantomData, sync::Arc};
++use std::{io, marker::PhantomData, sync::Arc};
+ use tlsn_core::{
+     config::{
+         prove::ProveRequest,
+@@ -306,6 +306,18 @@ impl Verifier<state::CommitAccepted<Proxy>> {
+     /// * `server_socket` - The connection to the server.
+     #[instrument(parent = &self.span, level = "info", skip_all, err)]
+     pub async fn run<T>(self, server_socket: T) -> Result<Verifier<state::Committed>>
++    where
++        T: AsyncRead + AsyncWrite + Send + Unpin,
++    {
++        Ok(self.run_with_capture(server_socket).await?.0)
++    }
++
++    /// Runs Proxy-TLS and returns the encrypted transcript for later replay.
++    #[instrument(parent = &self.span, level = "info", skip_all, err)]
++    pub async fn run_with_capture<T>(
++        self,
++        server_socket: T,
++    ) -> Result<(Verifier<state::Committed>, ProxyTranscript)>
+     where
+         T: AsyncRead + AsyncWrite + Send + Unpin,
+     {
+@@ -331,12 +343,36 @@ impl Verifier<state::CommitAccepted<Proxy>> {
+ 
+         futures::future::try_join(
+             async {
+-                futures::io::copy(&mut prover_reader, &mut server_write).await?;
+-                server_write.close().await
++                futures::io::copy(&mut prover_reader, &mut server_write)
++                    .await
++                    .map_err(|error| {
++                        io::Error::new(
++                            error.kind(),
++                            format!("prover-to-server forwarding failed: {error}"),
++                        )
++                    })?;
++                server_write.close().await.map_err(|error| {
++                    io::Error::new(
++                        error.kind(),
++                        format!("closing server connection failed: {error}"),
++                    )
++                })
+             },
+             async {
+-                futures::io::copy(&mut server_reader, &mut prover_write).await?;
+-                prover_write.close().await
++                futures::io::copy(&mut server_reader, &mut prover_write)
++                    .await
++                    .map_err(|error| {
++                        io::Error::new(
++                            error.kind(),
++                            format!("server-to-prover forwarding failed: {error}"),
++                        )
++                    })?;
++                prover_write.close().await.map_err(|error| {
++                    io::Error::new(
++                        error.kind(),
++                        format!("closing prover connection failed: {error}"),
++                    )
++                })
+             },
+         )
+         .await
+@@ -350,6 +386,7 @@ impl Verifier<state::CommitAccepted<Proxy>> {
+         let conn_time = prover_reader
+             .first_read()
+             .expect("connection time should have been set");
++        let capture = ProxyTranscript::new(conn_time, sent_buf.clone(), recv_buf.clone());
+ 
+         let (mut ctx, mut vm, output, cf_vd_check, sf_vd_check) =
+             verifier.finalize(&sent_buf, &recv_buf, conn_time).await?;
+@@ -393,6 +430,58 @@ impl Verifier<state::CommitAccepted<Proxy>> {
+         sf_vd_check.check(&mut vm)?;
+         debug!("verified finished records successfully");
+ 
++        Ok((
++            Verifier {
++                config: self.config,
++                span: self.span,
++                ctx: Some(ctx),
++                mux_handle: self.mux_handle,
++                state: state::Committed {
++                    vm,
++                    keys,
++                    tls_transcript,
++                },
++            },
++            capture,
++        ))
++    }
++
++    /// Replays an encrypted Proxy-TLS transcript using fresh protocol state.
++    #[instrument(parent = &self.span, level = "info", skip_all, err)]
++    pub async fn replay(self, capture: ProxyTranscript) -> Result<Verifier<state::Committed>> {
++        let VerifierDeps::Proxy(VerifierProxyDeps { verifier, .. }) = self.state.deps else {
++            unreachable!("proxy-tls received incorrect deps")
++        };
++        let (mut ctx, mut vm, output, cf_vd_check, sf_vd_check) = verifier
++            .finalize(&capture.tls_sent, &capture.tls_recv, capture.time)
++            .await?;
++        let keys = output.keys;
++        let tls_transcript = output.tls_transcript;
++        let tag_proof = verify_tags(
++            &mut vm,
++            (keys.server_write_key, keys.server_write_iv),
++            keys.server_write_mac_key,
++            tls_transcript.version(),
++            tls_transcript.recv().to_vec(),
++        )
++        .map_err(|e| {
++            Error::internal()
++                .with_msg("tag verification setup failed")
++                .with_source(e)
++        })?;
++        vm.execute_all(&mut ctx).await.map_err(|e| {
++            Error::internal()
++                .with_msg("tag verification zk execution failed")
++                .with_source(e)
++        })?;
++        tag_proof.verify().map_err(|e| {
++            Error::internal()
++                .with_msg("tag verification failed")
++                .with_source(e)
++        })?;
++        cf_vd_check.check(&mut vm)?;
++        sf_vd_check.check(&mut vm)?;
++
+         Ok(Verifier {
+             config: self.config,
+             span: self.span,

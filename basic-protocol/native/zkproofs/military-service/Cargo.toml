@@ -1,0 +1,11 @@
+[workspace]
+members = ["program", "script"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+sp1-sdk = { version = "=6.2.2", features = ["blocking"] }
+sp1-zkvm = "=6.2.2"

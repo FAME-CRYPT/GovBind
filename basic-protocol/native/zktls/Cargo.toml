@@ -1,0 +1,30 @@
+[package]
+name = "govbind-basic-zktls"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+bincode = "1.3"
+clap = { version = "4.5", features = ["derive"] }
+futures = "0.3"
+hex = "0.4"
+http-body-util = "0.1"
+hyper = { version = "1.1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+rangeset = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tlsn = { path = "../../../vendor/tlsn/crates/tlsn", features = ["mozilla-certs"] }
+tlsn-formats = { path = "../../../vendor/tlsn/crates/formats" }
+tokio = { version = "1.38", features = ["fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "time"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bin]]
+name = "govbind-basic-zktls-prover"
+path = "src/bin/prover.rs"

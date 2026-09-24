@@ -1,0 +1,6 @@
+[submodule "vendor/tlsn"]
+	path = vendor/tlsn
+	url = https://github.com/tlsnotary/tlsn.git
+[submodule "vendor/zkpdf"]
+	path = basic-protocol/vendor/zkpdf
+	url = https://github.com/privacy-ethereum/zkpdf.git

@@ -1,0 +1,37 @@
+{
+  "name": "govbind-basic-protocol",
+  "version": "1.0.0",
+  "description": "GovBind's basic protocol using TLSNotary, zkPDF, and SP1 execute mode.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "npm run build:native && tsc",
+    "build:native": "npm run build:native:text-extractor && npm run build:native:zktls && npm run build:native:zkproofs",
+    "build:native:text-extractor": "cargo build --release --manifest-path native/text-extractor/Cargo.toml",
+    "build:native:zktls": "cargo build --release --manifest-path native/zktls/Cargo.toml",
+    "build:native:zkproofs": "npm run build:native:zkproof:military-service",
+    "build:native:zkproof:military-service": "cargo build --release --manifest-path native/zkproofs/military-service/Cargo.toml --bin military-service",
+    "build:notary": "cargo build --release --manifest-path ../external/notary/Cargo.toml",
+    "clean:downloads": "tsc && node dist/scripts/clean-downloads.js",
+    "start": "npm run build && node dist/index.js",
+    "start:notary": "cargo run --release --manifest-path ../external/notary/Cargo.toml -- --listen 127.0.0.1:8000 --key ../.runtime/notary.key",
+    "test": "tsc --noEmit"
+  },
+  "author": "Yunus Gürlek",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "multer": "^2.4.0",
+    "pdfjs-dist": "^6.3.289",
+    "pug": "^3.0.4"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^20.19.43",
+    "typescript": "^5.9.3"
+  }
+}

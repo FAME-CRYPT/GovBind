@@ -1,0 +1,89 @@
+doctype html
+html(lang='en')
+  head
+    meta(charset='utf-8')
+    meta(name='viewport' content='width=device-width, initial-scale=1')
+    title GovBind
+    link(rel='stylesheet' href='/styles.css')
+    script(src='/index.js' defer)
+  body
+    include includes/header.pug
+    main.shell
+      header.intro
+        p.eyebrow GovBind
+        h1 Prove a document claim privately
+        p.description Select a document and define the public assertion you want to check locally.
+
+      form.proof-form(action='/verify' method='post' enctype='multipart/form-data')
+        section.form-section
+          label(for='documentType') Document type
+          select#documentType(name='documentType' required)
+            option(value='' selected disabled) Select a document type
+            each document in documentTypes
+              option(value=document.documentType)= document.displayName
+
+        section.form-section
+          label(for='document') Document
+          input#document(type='file' name='document' accept='application/pdf,.pdf' required)
+          p.hint PDF only, up to 4 MB. The document and all private proof inputs stay on this computer.
+
+        section#proofParameters.form-section.proof-parameters(hidden)
+          .section-heading
+            h2 Proof parameters
+            p These values will be public.
+
+          #militaryParameters
+            .field-grid
+              div
+                label(for='generationDate') Generation date
+                input#generationDate(type='date' name='generationDate' value=today required)
+
+              div
+                label(for='assertionMonths') Time assertion
+                .input-suffix
+                  input#assertionMonths(type='number' name='assertionMonths' value='2' min='1' step='1' required)
+                  span months
+
+            p.assertion-copy
+              | I want to show that my military service is not due within#{' '}
+              span#assertionDuration 2 months
+              | #{' '}starting from#{' '}
+              span#generationDateLabel= generationDateLabel
+              | .
+
+          #residenceParameters(hidden)
+            label(for='cityCode') City to prove
+            select#cityCode(name='cityCode' required disabled)
+              option(value='' selected disabled) Select the city shown on the document
+              each city in residenceCities
+                option(value=city.code)= city.name
+            p.assertion-copy I want to prove that my registered residence is in the selected city without revealing my complete address.
+
+          #criminalRecordParameters(hidden)
+            p.assertion-copy I want to prove that the public 11-digit identity number in this authenticated document has no criminal record.
+            p.notice The identity number will be stored as a public proof input and will be visible to every verifier.
+
+          #driverLicenseParameters(hidden)
+            .field-grid
+              div
+                label(for='maximumTrafficTickets') Maximum traffic ticket count
+                input#maximumTrafficTickets(type='number' name='maximumTrafficTickets' value='1' min='1' max='4294967295' step='1' required disabled)
+              div
+                label(for='maximumTotalPenaltyPoints') Maximum total penalty points
+                input#maximumTotalPenaltyPoints(type='number' name='maximumTotalPenaltyPoints' value='1' min='1' max='4294967295' step='1' required disabled)
+              div
+                label(for='maximumActivePenaltyPoints') Maximum active penalty points
+                input#maximumActivePenaltyPoints(type='number' name='maximumActivePenaltyPoints' value='1' min='1' max='4294967295' step='1' required disabled)
+            p.assertion-copy I want to prove that the authenticated document's traffic ticket count, total penalty points, and active penalty points are each strictly below the selected public maximum.
+
+          #taxDebtParameters(hidden)
+            p.assertion-copy I want to prove that the public 11-digit identity number in this authenticated GİB document has no overdue tax debt.
+            p.notice The identity number and document issuance date will be stored as public proof inputs. The tax number, name, petition number, and other document fields remain private.
+
+          p#verificationStatus.form-status(role='status' hidden)
+          button#verifyButton(type='submit')
+            span.button-label Create proof
+            span.spinner(aria-hidden='true' hidden)
+
+        noscript
+          p.notice JavaScript is required to reveal the proof parameters.
