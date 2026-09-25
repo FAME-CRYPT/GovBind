@@ -1,8 +1,5 @@
 # GovBind
 
-This repository accompanies the GovBind project for Financial Cryptography and
-Data Security 2027.
-
 GovBind lets people prove limited facts from government-issued PDF documents
 without revealing the complete document or giving a verifier access to the
 government portal.
